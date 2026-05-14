@@ -4,8 +4,9 @@ import warnings
 import anthropic
 import yfinance as yf
 import pandas as pd
-import pandas_ta as ta
+import numpy as np
 import feedparser
+import ta
 from flask import Flask, render_template, jsonify, request
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -17,13 +18,11 @@ app = Flask(__name__)
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 PORT = int(os.environ.get("PORT", 5050))
 
-# In-memory prediction history (resets on restart)
 prediction_history = {}
 
-# BIST stocks with sectors
 SECTORS = {
-    "Bankacılık": ["GARAN.IS", "AKBNK.IS", "ISCTR.IS", "YKBNK.IS", "HALKB.IS", "VAKBN.IS", "TSKB.IS"],
-    "Havacılık": ["THYAO.IS", "PGSUS.IS"],
+    "Bankacilik": ["GARAN.IS", "AKBNK.IS", "ISCTR.IS", "YKBNK.IS", "HALKB.IS", "VAKBN.IS", "TSKB.IS"],
+    "Havacilik": ["THYAO.IS", "PGSUS.IS"],
     "Enerji": ["TUPRS.IS", "PETKM.IS", "ENKAI.IS"],
     "Savunma": ["ASELS.IS"],
     "Telecom": ["TCELL.IS", "TTKOM.IS"],
@@ -48,21 +47,15 @@ def get_ticker_sector(ticker):
     return "Diger"
 
 
-# ─────────────────────────────────────────────
-# NEWS SENTIMENT
-# ─────────────────────────────────────────────
 def get_news_sentiment(ticker_name):
     try:
         query = ticker_name + "+hisse+borsa"
         url = f"https://news.google.com/rss/search?q={query}&hl=tr&gl=TR&ceid=TR:tr"
         feed = feedparser.parse(url)
-
-        pos_words = ["yükseliş", "artış", "kazanç", "rekor", "tavan", "güçlü",
-                     "pozitif", "alım", "büyüme", "kâr", "kar", "atladı", "fırladı",
-                     "yükseldi", "çıktı", "rallisi", "toparlandı"]
-        neg_words = ["düşüş", "kayıp", "zarar", "satış", "negatif", "baskı",
-                     "risk", "endişe", "geriledi", "düştü", "çöktü", "eridi", "satıldı"]
-
+        pos_words = ["yukselis", "artis", "kazanc", "rekor", "tavan", "guclu",
+                     "pozitif", "alim", "buyume", "kar", "atladi", "firladi", "yukseldi"]
+        neg_words = ["dusus", "kayip", "zarar", "satis", "negatif", "baski",
+                     "risk", "endise", "geriledi", "dustu", "coktu", "erid"]
         pos, neg = 0, 0
         titles = []
         for entry in feed.entries[:6]:
@@ -73,16 +66,12 @@ def get_news_sentiment(ticker_name):
                 if w in tl: pos += 1
             for w in neg_words:
                 if w in tl: neg += 1
-
         sentiment = "pozitif" if pos > neg else ("negatif" if neg > pos else "nottr")
         return {"positive": pos, "negative": neg, "titles": titles[:3], "sentiment": sentiment}
     except Exception:
         return {"positive": 0, "negative": 0, "titles": [], "sentiment": "nottr"}
 
 
-# ─────────────────────────────────────────────
-# STOCK ANALYSIS (Enhanced)
-# ─────────────────────────────────────────────
 def analyze_stock(ticker):
     try:
         df = yf.download(ticker, period="1y", interval="1d", progress=False, auto_adjust=True)
@@ -98,111 +87,82 @@ def analyze_stock(ticker):
         high = df["High"].squeeze()
         low = df["Low"].squeeze()
 
-        close60 = close.tail(60)
-        vol60 = volume.tail(60)
-        high60 = high.tail(60)
-        low60 = low.tail(60)
+        close_s = pd.Series(close.values, dtype=float)
+        volume_s = pd.Series(volume.values, dtype=float)
+        high_s = pd.Series(high.values, dtype=float)
+        low_s = pd.Series(low.values, dtype=float)
 
         # RSI
-        rsi_s = ta.rsi(close60, length=14)
-        rsi_val = float(rsi_s.iloc[-1]) if rsi_s is not None and not rsi_s.empty else 50
+        rsi_ind = ta.momentum.RSIIndicator(close=close_s, window=14)
+        rsi_val = float(rsi_ind.rsi().iloc[-1])
 
         # MACD
-        macd_df = ta.macd(close60)
-        macd_bull, macd_hist_val = False, 0.0
-        if macd_df is not None and "MACDh_12_26_9" in macd_df.columns:
-            macd_hist_val = float(macd_df["MACDh_12_26_9"].iloc[-1])
-            macd_bull = macd_hist_val > 0
+        macd_ind = ta.trend.MACD(close=close_s)
+        macd_hist_val = float(macd_ind.macd_diff().iloc[-1])
+        macd_bull = macd_hist_val > 0
 
-        # OBV trend
-        obv_s = ta.obv(close60, vol60)
-        obv_bull = False
-        if obv_s is not None and len(obv_s) >= 10:
-            obv_bull = float(obv_s.iloc[-1]) > float(obv_s.iloc[-10])
+        # OBV
+        obv_ind = ta.volume.OnBalanceVolumeIndicator(close=close_s, volume=volume_s)
+        obv_s = obv_ind.on_balance_volume()
+        obv_bull = float(obv_s.iloc[-1]) > float(obv_s.iloc[-10]) if len(obv_s) >= 10 else False
 
         # Bollinger Bands
-        bb_df = ta.bbands(close60, length=20)
-        bb_pos = 0.5
-        if bb_df is not None:
-            try:
-                bbl = float(bb_df["BBL_20_2.0"].iloc[-1])
-                bbu = float(bb_df["BBU_20_2.0"].iloc[-1])
-                cur = float(close.iloc[-1])
-                if bbu - bbl > 0:
-                    bb_pos = (cur - bbl) / (bbu - bbl)
-            except Exception:
-                pass
+        bb_ind = ta.volatility.BollingerBands(close=close_s, window=20, window_dev=2)
+        bbl = float(bb_ind.bollinger_lband().iloc[-1])
+        bbu = float(bb_ind.bollinger_hband().iloc[-1])
+        cur_price = float(close_s.iloc[-1])
+        bb_pos = (cur_price - bbl) / (bbu - bbl) if (bbu - bbl) > 0 else 0.5
 
         # Stochastic
-        stoch_df = ta.stoch(high60, low60, close60)
-        stoch_k = 50.0
-        if stoch_df is not None and "STOCHk_14_3_3" in stoch_df.columns:
-            stoch_k = float(stoch_df["STOCHk_14_3_3"].iloc[-1])
+        stoch_ind = ta.momentum.StochasticOscillator(high=high_s, low=low_s, close=close_s, window=14, smooth_window=3)
+        stoch_k = float(stoch_ind.stoch().iloc[-1])
 
-        # 52-week stats
-        cur_price = float(close.iloc[-1])
-        w52_high = float(high.max())
-        w52_low = float(low.min())
+        # 52-week
+        w52_high = float(high_s.max())
+        w52_low = float(low_s.min())
         pct_from_high = (cur_price / w52_high - 1) * 100
 
-        # Pivot / Support / Resistance (last 20 days)
-        r_high = float(high60.tail(20).max())
-        r_low = float(low60.tail(20).min())
+        # Pivot / Support / Resistance
+        r_high = float(high_s.tail(20).max())
+        r_low = float(low_s.tail(20).min())
         pivot = (r_high + r_low + cur_price) / 3
         resistance1 = round(2 * pivot - r_low, 2)
         support1 = round(2 * pivot - r_high, 2)
 
         # Volume
-        avg_vol = float(vol60.mean())
-        last_vol = float(volume.iloc[-1])
+        avg_vol = float(volume_s.tail(20).mean())
+        last_vol = float(volume_s.iloc[-1])
         vol_ratio = last_vol / avg_vol if avg_vol > 0 else 1.0
 
         # Momentum
-        mom_5 = float((close.iloc[-1] / close.iloc[-6] - 1) * 100) if len(close) >= 6 else 0
-        mom_20 = float((close.iloc[-1] / close.iloc[-21] - 1) * 100) if len(close) >= 21 else 0
-        daily_change = float((close.iloc[-1] / close.iloc[-2] - 1) * 100) if len(close) >= 2 else 0
+        mom_5 = float((close_s.iloc[-1] / close_s.iloc[-6] - 1) * 100) if len(close_s) >= 6 else 0
+        mom_20 = float((close_s.iloc[-1] / close_s.iloc[-21] - 1) * 100) if len(close_s) >= 21 else 0
+        daily_change = float((close_s.iloc[-1] / close_s.iloc[-2] - 1) * 100) if len(close_s) >= 2 else 0
 
-        # ── SCORE (0-100) ──────────────────────────
+        # SCORE
         score = 0
-
-        # RSI sweet spot 58-72
         if 58 <= rsi_val <= 72:   score += 18
         elif 50 <= rsi_val < 58:  score += 9
         elif rsi_val > 72:        score += 3
-
-        # MACD
         if macd_bull:
             score += 14
             if macd_hist_val > 0.5: score += 4
-
-        # OBV (real buying pressure)
         if obv_bull: score += 14
-
-        # Volume spike
         if vol_ratio >= 3.0:   score += 20
         elif vol_ratio >= 2.0: score += 14
         elif vol_ratio >= 1.5: score += 8
         elif vol_ratio >= 1.2: score += 4
-
-        # 52-week high proximity
-        if pct_from_high >= 0:          score += 18  # already above 52w high!
-        elif -3 <= pct_from_high < 0:   score += 14  # very close
-        elif -8 <= pct_from_high < -3:  score += 7
-
-        # Momentum
+        if pct_from_high >= 0:         score += 18
+        elif -3 <= pct_from_high < 0:  score += 14
+        elif -8 <= pct_from_high < -3: score += 7
         if mom_5 > 7:   score += 8
         elif mom_5 > 3: score += 5
         elif mom_5 > 0: score += 2
-
-        # Bollinger
         if 0.65 <= bb_pos <= 0.92: score += 8
         elif 0.5 <= bb_pos < 0.65: score += 3
-
-        # Stochastic (50-80 = bullish momentum zone)
         if 50 <= stoch_k <= 80: score += 4
 
         sector = get_ticker_sector(ticker)
-
         return {
             "ticker": ticker.replace(".IS", ""),
             "full_ticker": ticker,
@@ -231,9 +191,6 @@ def analyze_stock(ticker):
         return None
 
 
-# ─────────────────────────────────────────────
-# CRYPTO
-# ─────────────────────────────────────────────
 def get_crypto_data():
     try:
         url = "https://api.coingecko.com/api/v3/coins/markets"
@@ -248,7 +205,6 @@ def get_crypto_data():
         resp = requests.get(url, params=params, timeout=15)
         if resp.status_code != 200:
             return []
-
         result = []
         for coin in resp.json():
             c24 = coin.get("price_change_percentage_24h") or 0
@@ -257,20 +213,18 @@ def get_crypto_data():
             vol = coin.get("total_volume") or 0
             mcap = coin.get("market_cap") or 1
             vtm = (vol / mcap) * 100
-
             score = 0
-            if c24 > 5:   score += 30
-            elif c24 > 2: score += 20
-            elif c24 > 0: score += 10
-            if c7d > 10:  score += 25
-            elif c7d > 5: score += 15
-            elif c7d > 0: score += 8
-            if vtm > 20:  score += 25
+            if c24 > 5:    score += 30
+            elif c24 > 2:  score += 20
+            elif c24 > 0:  score += 10
+            if c7d > 10:   score += 25
+            elif c7d > 5:  score += 15
+            elif c7d > 0:  score += 8
+            if vtm > 20:   score += 25
             elif vtm > 10: score += 15
             elif vtm > 5:  score += 8
-            if c1h > 1:   score += 20
-            elif c1h > 0: score += 10
-
+            if c1h > 1:    score += 20
+            elif c1h > 0:  score += 10
             result.append({
                 "name": coin.get("name"),
                 "symbol": coin.get("symbol", "").upper(),
@@ -283,15 +237,11 @@ def get_crypto_data():
                 "score": min(score, 100),
                 "image": coin.get("image")
             })
-
         return sorted(result, key=lambda x: x["score"], reverse=True)
     except Exception:
         return []
 
 
-# ─────────────────────────────────────────────
-# CLAUDE
-# ─────────────────────────────────────────────
 def ask_claude(prompt, system=""):
     if not ANTHROPIC_API_KEY:
         return "ANTHROPIC_API_KEY eksik."
@@ -312,9 +262,6 @@ def ask_claude(prompt, system=""):
     return msg.content[0].text
 
 
-# ─────────────────────────────────────────────
-# ACCURACY TRACKING
-# ─────────────────────────────────────────────
 def save_prediction(top_stocks):
     today = datetime.now().strftime("%Y-%m-%d")
     prediction_history[today] = [
@@ -327,7 +274,6 @@ def get_accuracy():
     yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
     if yesterday not in prediction_history:
         return None
-
     past = prediction_history[yesterday]
     correct, results = 0, []
     for p in past:
@@ -339,25 +285,20 @@ def get_accuracy():
             close = df["Close"].squeeze()
             cur = float(close.iloc[-1])
             change = (cur - p["price"]) / p["price"] * 100
-            hit = change >= 9.5  # tavan threshold
             if change > 0: correct += 1
             results.append({
                 "ticker": p["ticker"],
                 "predicted_price": p["price"],
                 "actual_price": round(cur, 2),
                 "change": round(change, 2),
-                "hit_tavan": hit
+                "hit_tavan": change >= 9.5
             })
         except Exception:
             pass
-
     acc = (correct / len(results) * 100) if results else 0
     return {"accuracy": round(acc, 1), "results": results, "date": yesterday}
 
 
-# ─────────────────────────────────────────────
-# ROUTES
-# ─────────────────────────────────────────────
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -365,7 +306,6 @@ def index():
 
 @app.route("/api/tavan", methods=["GET"])
 def api_tavan():
-    # Parallel stock analysis
     all_results = []
     with ThreadPoolExecutor(max_workers=10) as ex:
         futures = {ex.submit(analyze_stock, t): t for t in BIST_STOCKS}
@@ -374,7 +314,6 @@ def api_tavan():
             if r:
                 all_results.append(r)
 
-    # Sector momentum bonus
     sector_moms = defaultdict(list)
     for r in all_results:
         sector_moms[r["sector"]].append(r["momentum_5d"])
@@ -390,7 +329,6 @@ def api_tavan():
     all_results.sort(key=lambda x: x["score"], reverse=True)
     top = all_results[:10]
 
-    # Parallel news for top 10
     with ThreadPoolExecutor(max_workers=5) as ex:
         news_futures = {ex.submit(get_news_sentiment, s["ticker"]): i for i, s in enumerate(top)}
         for f in as_completed(news_futures):
@@ -405,34 +343,32 @@ def api_tavan():
     top.sort(key=lambda x: x["score"], reverse=True)
     save_prediction(top)
 
-    # Claude prompt
     yarin = (datetime.now() + timedelta(days=1)).strftime("%d.%m.%Y")
     summary = "\n".join([
         f"- {s['ticker']} [{s['sector']}]: {s['price']} TL | Günlük={s['daily_change']}% | RSI={s['rsi']} | "
-        f"MACD={'↑' if s['macd_bullish'] else '↓'} | OBV={'↑' if s['obv_bullish'] else '↓'} | "
-        f"Hacim={s['volume_ratio']}x | 5g Mom={s['momentum_5d']}% | 52hZirve'ye={s['pct_from_high']}% | "
-        f"Direnç={s['resistance1']} TL | Destek={s['support1']} TL | Haber={s.get('news', {}).get('sentiment', 'nötr')} | Skor={s['score']}/100"
+        f"MACD={'yukari' if s['macd_bullish'] else 'asagi'} | OBV={'yukari' if s['obv_bullish'] else 'asagi'} | "
+        f"Hacim={s['volume_ratio']}x | 5g Mom={s['momentum_5d']}% | 52hZirve={s['pct_from_high']}% | "
+        f"Direnc={s['resistance1']} TL | Destek={s['support1']} TL | Haber={s.get('news', {}).get('sentiment','notr')} | Skor={s['score']}/100"
         for s in top
     ])
 
-    prompt = f"""Bugün ({datetime.now().strftime('%d.%m.%Y')}) BIST'de yaptığım gelişmiş teknik analiz sonuçları:
+    prompt = f"""Bugun ({datetime.now().strftime('%d.%m.%Y')}) BIST'de yaptigim gelismis teknik analiz sonuclari:
 
 {summary}
 
-Aşağıdaki formatta KESIN tahmin ver:
+Asagidaki formatta KESIN tahmin ver:
 
 YARIN ({yarin}) TAVAN ADAYLARI:
-Her hisse için:
-▸ Hisse: [isim] | Sektör: [sektör]
-▸ Bugünkü fiyat: X TL → Yarın hedef: Y TL (tavan %10 = Z TL)
+Her hisse icin:
+▸ Hisse: [isim] | Sektor: [sektor]
+▸ Bugunku fiyat: X TL → Yarin hedef: Y TL (tavan %10 = Z TL)
 ▸ Tavan ihtimali: %XX
-▸ Güçlü sinyaller: [RSI/OBV/Hacim/Haber gerekçesi]
-▸ Risk: [kısa uyarı]
+▸ Guclu sinyaller: [RSI/OBV/Hacim/Haber gerekce]
+▸ Risk: [kisa uyari]
 
-En az 4 hisse ver. Sonunda sektör bazlı genel yorum + BIST 100 endeks hedefi yaz."""
+En az 4 hisse ver. Sonunda sektor bazli genel yorum + BIST 100 endeks hedefi yaz."""
 
     ai_analysis = ask_claude(prompt)
-
     return jsonify({
         "stocks": all_results[:25],
         "top_candidates": top,
@@ -446,32 +382,29 @@ En az 4 hisse ver. Sonunda sektör bazlı genel yorum + BIST 100 endeks hedefi y
 def api_crypto():
     coins = get_crypto_data()
     top = coins[:10]
-
     yarin = (datetime.now() + timedelta(days=1)).strftime("%d.%m.%Y")
     summary = "\n".join([
         f"- {c['name']} ({c['symbol']}): ${c['price']} | 1s={c['change_1h']}% | "
         f"24s={c['change_24h']}% | 7g={c['change_7d']}% | Hacim/Mcap={c['vol_to_mcap']}% | Skor={c['score']}/100"
         for c in top
     ])
-
-    prompt = f"""Bugün ({datetime.now().strftime('%d.%m.%Y')}) kripto para piyasası verileri:
+    prompt = f"""Bugun ({datetime.now().strftime('%d.%m.%Y')}) kripto para piyasasi verileri:
 
 {summary}
 
-Aşağıdaki formatta KESIN tahmin ver:
+Asagidaki formatta KESIN tahmin ver:
 
-24-48 SAAT KRİPTO TAHMİNİ ({yarin}):
-Her coin için:
+24-48 SAAT KRIPTO TAHMINI ({yarin}):
+Her coin icin:
 ▸ Coin: [isim] ([sembol])
-▸ Şimdiki fiyat: $X → 48 saat hedef: $Y
-▸ Yükseliş ihtimali: %XX
-▸ Güçlü sinyaller: [gerekçe]
+▸ Simdiki fiyat: $X → 48 saat hedef: $Y
+▸ Yukselis ihtimali: %XX
+▸ Guclu sinyaller: [gerekcе]
 
-Bitcoin için mutlaka ayrı bölüm: şimdiki fiyat, 48 saat hedef, 1 hafta hedef.
-En az 4 coin ver. Sonunda genel kripto piyasası yorum yap."""
+Bitcoin icin mutlaka ayri bolum: simdiki fiyat, 48 saat hedef, 1 hafta hedef.
+En az 4 coin ver. Sonunda genel kripto piyasasi yorumu yap."""
 
     ai_analysis = ask_claude(prompt)
-
     return jsonify({
         "coins": coins,
         "top_candidates": top,
@@ -485,14 +418,13 @@ def api_chat():
     data = request.json
     question = data.get("question", "").strip()
     if not question:
-        return jsonify({"error": "Soru boş olamaz"}), 400
-
+        return jsonify({"error": "Soru bos olamaz"}), 400
     today = datetime.now().strftime("%d.%m.%Y")
     system = (
-        f"Sen BIST, kripto, forex ve global piyasalar konusunda deneyimli cesur bir finans analistisin. Bugün: {today}. "
-        "KESIN KURAL: Asla 'kesin söyleyemem', 'garanti edemem', 'danışmana gidin', 'yatırım tavsiyesi değildir' deme. "
-        "Her soruda mutlaka somut fiyat hedefi, tarih ve yüzde tahmin ver. "
-        "Yanıtın en sonuna sadece '(Bu bir tahmindir)' ekle. Türkçe yaz."
+        f"Sen BIST, kripto, forex ve global piyasalar konusunda deneyimli cesur bir finans analistisin. Bugun: {today}. "
+        "KESIN KURAL: Asla 'kesin soyleyemem', 'garanti edemem', 'danismana gidin', 'yatirim tavsiyesi degildir' deme. "
+        "Her soruda mutlaka somut fiyat hedefi, tarih ve yuzde tahmin ver. "
+        "Yanıtın en sonuna sadece '(Bu bir tahmindir)' ekle. Turkce yaz."
     )
     answer = ask_claude(question, system=system)
     return jsonify({"answer": answer, "timestamp": datetime.now().strftime("%d.%m.%Y %H:%M")})
@@ -502,14 +434,14 @@ def api_chat():
 def api_accuracy():
     result = get_accuracy()
     if not result:
-        return jsonify({"message": "Dün tahmin kaydı yok (bot ilk kez çalışıyor olabilir)."})
+        return jsonify({"message": "Dun tahmin kaydi yok."})
     return jsonify(result)
 
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("  BORSA TAHMiN AI v2 - Basliyor...")
+    print("  BORSA TAHMIN AI v2 - Basliyor...")
     print(f"  API Key: {'Mevcut' if ANTHROPIC_API_KEY else 'EKSIK!'}")
     print(f"  Adres: http://localhost:{PORT}")
     print("=" * 60)
-    app.run(debug=True, host="0.0.0.0", port=PORT)
+    app.run(debug=False, host="0.0.0.0", port=PORT)
