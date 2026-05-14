@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Borsa Tahmin AI</title>
+<style>
+  :root {
+    --bg: #0a0e1a;
+    --card: #111827;
+    --card2: #1a2235;
+    --border: #1e2d45;
+    --green: #00e676;
+    --red: #ff4757;
+    --blue: #4fc3f7;
+    --gold: #ffd700;
+    --purple: #bb86fc;
+    --text: #e8eaf6;
+    --muted: #8899aa;
+    --accent: #00b4d8;
+    --orange: #ff9800;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; min-height: 100vh; }
+
+  .header {
+    background: linear-gradient(135deg, #0d1b2a 0%, #1a2a4a 50%, #0d1b2a 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 28px;
+    display: flex; align-items: center; justify-content: space-between;
+    position: sticky; top: 0; z-index: 100;
+  }
+  .logo { display: flex; align-items: center; gap: 12px; }
+  .logo-icon { width: 40px; height: 40px; background: linear-gradient(135deg,#00b4d8,#0077b6); border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 20px; }
+  .logo-text h1 { font-size: 19px; font-weight: 700; }
+  .logo-text p { font-size: 10px; color: var(--muted); letter-spacing: 1px; text-transform: uppercase; }
+  .live-badge { display: flex; align-items: center; gap: 6px; background: rgba(0,230,118,.1); border: 1px solid rgba(0,230,118,.3); padding: 5px 12px; border-radius: 20px; font-size: 12px; color: var(--green); }
+  .live-dot { width: 8px; height: 8px; background: var(--green); border-radius: 50%; animation: pulse 1.5s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(.8)} }
+
+  .tabs { display: flex; gap: 4px; padding: 18px 28px 0; border-bottom: 1px solid var(--border); }
+  .tab { padding: 11px 22px; border: none; background: transparent; color: var(--muted); cursor: pointer; font-size: 14px; font-weight: 500; border-bottom: 2px solid transparent; transition: all .2s; display: flex; align-items: center; gap: 8px; }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab-badge { background: var(--accent); color: #000; font-size: 10px; padding: 2px 6px; border-radius: 10px; font-weight: 700; }
+
+  .main { padding: 24px 28px; max-width: 1400px; margin: 0 auto; }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  .action-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
+  .action-info h2 { font-size: 21px; font-weight: 700; }
+  .action-info p { font-size: 13px; color: var(--muted); margin-top: 3px; }
+
+  .btn-analyze {
+    background: linear-gradient(135deg,#00b4d8,#0077b6); color: #fff; border: none;
+    padding: 12px 26px; border-radius: 12px; font-size: 15px; font-weight: 600;
+    cursor: pointer; display: flex; align-items: center; gap: 8px; transition: all .2s;
+    box-shadow: 0 4px 20px rgba(0,180,216,.3);
+  }
+  .btn-analyze:hover { transform: translateY(-2px); box-shadow: 0 6px 28px rgba(0,180,216,.5); }
+  .btn-analyze:disabled { opacity: .6; transform: none; cursor: not-allowed; }
+
+  .loading { display: none; flex-direction: column; align-items: center; justify-content: center; padding: 60px; gap: 18px; }
+  .spinner { width: 48px; height: 48px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading-text { color: var(--muted); font-size: 14px; }
+  .loading-sub { color: var(--muted); font-size: 12px; opacity: .7; }
+
+  .results-grid { display: grid; grid-template-columns: 1fr 1.4fr; gap: 20px; margin-top: 16px; }
+  @media(max-width:900px){.results-grid{grid-template-columns:1fr}}
+
+  .section-title { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
+
+  /* Accuracy bar */
+  .accuracy-bar {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 14px 18px; margin-bottom: 16px;
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  }
+  .acc-label { font-size: 12px; color: var(--muted); }
+  .acc-value { font-size: 20px; font-weight: 700; color: var(--green); }
+  .acc-detail { font-size: 12px; color: var(--muted); margin-left: auto; }
+
+  /* Stock cards */
+  .stock-list { display: flex; flex-direction: column; gap: 10px; }
+  .stock-card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+    padding: 14px 16px; transition: all .2s;
+  }
+  .stock-card:hover { background: var(--card2); border-color: var(--accent); transform: translateX(3px); }
+  .stock-card-top { display: flex; align-items: center; gap: 12px; }
+  .stock-rank { width: 28px; height: 28px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; }
+  .rank-1 { background: rgba(255,215,0,.12); border: 1px solid rgba(255,215,0,.4); color: var(--gold); }
+  .rank-2 { background: rgba(192,192,192,.1); border: 1px solid rgba(192,192,192,.3); color: #c0c0c0; }
+  .rank-3 { background: rgba(205,127,50,.1); border: 1px solid rgba(205,127,50,.3); color: #cd7f32; }
+  .rank-n { background: rgba(0,180,216,.08); border: 1px solid rgba(0,180,216,.25); color: var(--accent); }
+  .stock-info { flex: 1; min-width: 0; }
+  .stock-ticker { font-size: 16px; font-weight: 700; }
+  .stock-right { text-align: right; flex-shrink: 0; }
+  .stock-price { font-size: 15px; font-weight: 600; }
+  .stock-change { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 6px; margin-top: 3px; display: inline-block; }
+  .pos { background: rgba(0,230,118,.12); color: var(--green); }
+  .neg { background: rgba(255,71,87,.12); color: var(--red); }
+  .neutral { background: rgba(136,153,170,.12); color: var(--muted); }
+
+  /* Badges */
+  .badges { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+  .badge { font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 6px; }
+  .badge-sector { background: rgba(79,195,247,.1); color: var(--blue); border: 1px solid rgba(79,195,247,.25); }
+  .badge-green { background: rgba(0,230,118,.1); color: var(--green); border: 1px solid rgba(0,230,118,.25); }
+  .badge-red { background: rgba(255,71,87,.1); color: var(--red); border: 1px solid rgba(255,71,87,.25); }
+  .badge-gold { background: rgba(255,215,0,.1); color: var(--gold); border: 1px solid rgba(255,215,0,.3); }
+  .badge-orange { background: rgba(255,152,0,.1); color: var(--orange); border: 1px solid rgba(255,152,0,.25); }
+  .badge-muted { background: rgba(136,153,170,.1); color: var(--muted); border: 1px solid rgba(136,153,170,.2); }
+
+  /* Metrics row */
+  .metrics-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+  .metric { font-size: 11px; color: var(--muted); }
+  .metric span { color: var(--text); font-weight: 500; }
+
+  /* SR levels */
+  .sr-row { display: flex; gap: 14px; margin-top: 7px; font-size: 11px; }
+  .sr-item { display: flex; align-items: center; gap: 4px; }
+  .sr-label { color: var(--muted); }
+  .sr-val-res { color: var(--red); font-weight: 600; }
+  .sr-val-sup { color: var(--green); font-weight: 600; }
+
+  /* Score bar */
+  .score-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+  .score-bar { flex: 1; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
+  .score-fill { height: 100%; border-radius: 2px; transition: width 1s ease; }
+  .score-text { font-size: 11px; color: var(--muted); white-space: nowrap; }
+
+  /* AI Box */
+  .ai-box { background: var(--card); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; }
+  .ai-box-header { background: linear-gradient(135deg,rgba(187,134,252,.1),rgba(0,180,216,.1)); border-bottom: 1px solid var(--border); padding: 14px 18px; display: flex; align-items: center; gap: 12px; }
+  .ai-icon { width: 34px; height: 34px; background: linear-gradient(135deg,#bb86fc,#7c4dff); border-radius: 9px; display: flex; align-items: center; justify-content: center; font-size: 17px; }
+  .ai-box-title { font-size: 14px; font-weight: 600; }
+  .ai-box-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .ai-content { padding: 18px; font-size: 14px; line-height: 1.85; color: #d0d8e8; white-space: pre-wrap; max-height: 520px; overflow-y: auto; }
+  .ai-content::-webkit-scrollbar { width: 4px; }
+  .ai-content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .timestamp { text-align: right; font-size: 11px; color: var(--muted); margin-top: 14px; }
+
+  /* Crypto */
+  .crypto-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+  .crypto-card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 16px; transition: all .2s; }
+  .crypto-card:hover { background: var(--card2); border-color: var(--purple); transform: translateY(-3px); box-shadow: 0 8px 24px rgba(187,134,252,.1); }
+  .crypto-top { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .crypto-img { width: 34px; height: 34px; border-radius: 50%; background: var(--border); }
+  .crypto-name { font-size: 14px; font-weight: 700; }
+  .crypto-symbol { font-size: 11px; color: var(--muted); }
+  .crypto-price { font-size: 17px; font-weight: 700; margin-bottom: 10px; }
+  .crypto-changes { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+  .change-pill { font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 6px; }
+
+  /* Chat */
+  .chat-container { max-width: 820px; margin: 0 auto; }
+  .chat-messages { min-height: 320px; max-height: 500px; overflow-y: auto; padding: 18px; background: var(--card); border: 1px solid var(--border); border-radius: 16px; margin-bottom: 14px; display: flex; flex-direction: column; gap: 14px; }
+  .chat-messages::-webkit-scrollbar { width: 4px; }
+  .chat-messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  .msg { max-width: 85%; padding: 12px 16px; border-radius: 14px; font-size: 14px; line-height: 1.75; white-space: pre-wrap; }
+  .msg-user { background: linear-gradient(135deg,#0077b6,#00b4d8); color: #fff; align-self: flex-end; border-bottom-right-radius: 4px; }
+  .msg-ai { background: var(--card2); border: 1px solid var(--border); color: var(--text); align-self: flex-start; border-bottom-left-radius: 4px; }
+  .msg-welcome { background: linear-gradient(135deg,rgba(187,134,252,.08),rgba(0,180,216,.08)); border: 1px solid rgba(187,134,252,.2); color: var(--text); align-self: center; text-align: center; max-width: 100%; font-size: 13px; }
+  .chat-input-row { display: flex; gap: 10px; }
+  .chat-input { flex: 1; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 13px 16px; color: var(--text); font-size: 14px; outline: none; transition: border-color .2s; }
+  .chat-input:focus { border-color: var(--accent); }
+  .chat-input::placeholder { color: var(--muted); }
+  .btn-send { background: linear-gradient(135deg,#bb86fc,#7c4dff); color: #fff; border: none; padding: 13px 20px; border-radius: 12px; font-size: 18px; cursor: pointer; transition: all .2s; box-shadow: 0 4px 15px rgba(187,134,252,.3); }
+  .btn-send:hover { transform: translateY(-2px); box-shadow: 0 6px 24px rgba(187,134,252,.5); }
+  .btn-send:disabled { opacity: .6; transform: none; cursor: not-allowed; }
+  .quick-questions { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 14px; }
+  .quick-q { background: var(--card2); border: 1px solid var(--border); color: var(--muted); padding: 6px 13px; border-radius: 20px; font-size: 12px; cursor: pointer; transition: all .2s; }
+  .quick-q:hover { border-color: var(--accent); color: var(--accent); background: rgba(0,180,216,.08); }
+
+  .note { background: rgba(0,180,216,.06); border: 1px solid rgba(0,180,216,.2); border-radius: 10px; padding: 10px 14px; font-size: 12px; color: var(--muted); margin-bottom: 18px; }
+  .note span { color: var(--accent); }
+  .mt-lg { margin-top: 28px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<header class="header">
+  <div class="logo">
+    <div class="logo-icon">📊</div>
+    <div class="logo-text">
+      <h1>Borsa Tahmin AI</h1>
+      <p>Yapay Zeka Destekli Piyasa Analizi</p>
+    </div>
+  </div>
+  <div class="live-badge"><div class="live-dot"></div>Canlı Veri</div>
+</header>
+
+<div class="tabs">
+  <button class="tab active" onclick="switchTab('bist',this)">📈 BIST Tavan <span class="tab-badge">HOT</span></button>
+  <button class="tab" onclick="switchTab('crypto',this)">₿ Kripto Para</button>
+  <button class="tab" onclick="switchTab('chat',this)">🤖 AI Sohbet</button>
+</div>
+
+<div class="main">
+
+  <!-- BIST -->
+  <div id="panel-bist" class="panel active">
+    <div class="note">ℹ️ <span>Not:</span> Tüm sonuçlar teknik analiz + haber sentiment + sektör korelasyonu ile üretilmiş tahminlerdir.</div>
+    <div class="action-bar">
+      <div class="action-info">
+        <h2>BIST Tavan Hisse Tahmini</h2>
+        <p>RSI · MACD · OBV · Destek/Direnç · 52H Zirve · Haber Sentiment · Sektör Korelasyonu</p>
+      </div>
+      <button class="btn-analyze" id="btn-bist" onclick="analyzeBist()">🔍 Analiz Başlat</button>
+    </div>
+    <div id="acc-bar" class="accuracy-bar hidden">
+      <div>
+        <div class="acc-label">Dünkü Tahmin Doğruluğu</div>
+        <div class="acc-value" id="acc-value">-%</div>
+      </div>
+      <div class="acc-detail" id="acc-detail"></div>
+    </div>
+    <div class="loading" id="loading-bist">
+      <div class="spinner"></div>
+      <div class="loading-text" id="loading-bist-text">BIST hisseleri indiriliyor...</div>
+      <div class="loading-sub">50 hisse paralel analiz ediliyor · RSI · MACD · OBV · Haber</div>
+    </div>
+    <div id="results-bist" class="hidden">
+      <div class="results-grid">
+        <div>
+          <div class="section-title">🔥 Tavan Adayları (Gelişmiş Skor)</div>
+          <div class="stock-list" id="stock-list"></div>
+          <div class="timestamp" id="bist-timestamp"></div>
+        </div>
+        <div>
+          <div class="section-title">🤖 Claude AI Detaylı Analizi</div>
+          <div class="ai-box">
+            <div class="ai-box-header">
+              <div class="ai-icon">🧠</div>
+              <div>
+                <div class="ai-box-title">Yapay Zeka Değerlendirmesi</div>
+                <div class="ai-box-sub">Claude Sonnet · RSI + OBV + Haber + Sektör bazlı</div>
+              </div>
+            </div>
+            <div class="ai-content" id="ai-bist-content"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CRYPTO -->
+  <div id="panel-crypto" class="panel">
+    <div class="note">ℹ️ <span>Not:</span> CoinGecko verisi · 30 coin · 24-48 saat tahmini.</div>
+    <div class="action-bar">
+      <div class="action-info">
+        <h2>Kripto Para Tahmini</h2>
+        <p>24-48 saat en güçlü yükseliş adayları</p>
+      </div>
+      <button class="btn-analyze" id="btn-crypto" onclick="analyzeCrypto()">🔍 Analiz Başlat</button>
+    </div>
+    <div class="loading" id="loading-crypto">
+      <div class="spinner"></div>
+      <div class="loading-text">Kripto piyasası verileri getiriliyor...</div>
+    </div>
+    <div id="results-crypto" class="hidden">
+      <div class="results-grid">
+        <div>
+          <div class="section-title">🚀 En Güçlü Adaylar</div>
+          <div class="stock-list" id="crypto-top-list"></div>
+          <div class="timestamp" id="crypto-timestamp"></div>
+        </div>
+        <div>
+          <div class="section-title">🤖 Claude AI Kripto Analizi</div>
+          <div class="ai-box">
+            <div class="ai-box-header">
+              <div class="ai-icon">🧠</div>
+              <div>
+                <div class="ai-box-title">Yapay Zeka Değerlendirmesi</div>
+                <div class="ai-box-sub">Claude Sonnet · Hedef fiyat + tarih</div>
+              </div>
+            </div>
+            <div class="ai-content" id="ai-crypto-content"></div>
+          </div>
+        </div>
+      </div>
+      <div class="section-title mt-lg">📊 Tüm Kripto Listesi</div>
+      <div class="crypto-grid" id="crypto-full-list"></div>
+    </div>
+  </div>
+
+  <!-- CHAT -->
+  <div id="panel-chat" class="panel">
+    <div class="action-bar">
+      <div class="action-info">
+        <h2>AI ile Piyasa Sohbeti</h2>
+        <p>BIST hisseleri · Kripto · Forex · Altın · Dolar/TL hakkında her şeyi sor</p>
+      </div>
+    </div>
+    <div class="chat-container">
+      <div class="quick-questions">
+        <button class="quick-q" onclick="quickAsk(this)">THYAO alınır mı?</button>
+        <button class="quick-q" onclick="quickAsk(this)">Bitcoin bu hafta nereye gider?</button>
+        <button class="quick-q" onclick="quickAsk(this)">Dolar/TL tahmini nedir?</button>
+        <button class="quick-q" onclick="quickAsk(this)">Altın yükselir mi?</button>
+        <button class="quick-q" onclick="quickAsk(this)">BIST 100 yıl sonu hedefi</button>
+        <button class="quick-q" onclick="quickAsk(this)">Ethereum fiyat tahmini</button>
+        <button class="quick-q" onclick="quickAsk(this)">GARAN hisse değerlendirme</button>
+        <button class="quick-q" onclick="quickAsk(this)">Yarın hangi hisse tavan yapar?</button>
+      </div>
+      <div class="chat-messages" id="chat-messages">
+        <div class="msg msg-welcome">
+          🤖 Merhaba! Ben Borsa Tahmin AI'yim.<br>
+          BIST · Kripto · Forex · Altın · Dolar hakkında kesin tahminler yapıyorum.<br>
+          Aşağıdan hızlı soru seç veya kendin yaz!
+        </div>
+      </div>
+      <div class="chat-input-row">
+        <input class="chat-input" id="chat-input" type="text"
+          placeholder="Hangi hisseyi almalıyım? Bitcoin nereye gider?..."
+          onkeydown="if(event.key==='Enter') sendChat()"/>
+        <button class="btn-send" id="btn-send" onclick="sendChat()">➤</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+function switchTab(name, el) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('panel-' + name).classList.add('active');
+}
+
+function scoreColor(s) {
+  if (s >= 75) return '#00e676';
+  if (s >= 55) return '#ffd700';
+  if (s >= 35) return '#ff9800';
+  return '#ff4757';
+}
+function chClass(v) { return v > 0 ? 'pos' : v < 0 ? 'neg' : 'neutral'; }
+function sign(v) { return v > 0 ? '+' : ''; }
+function rankClass(i) { return ['rank-1','rank-2','rank-3'][i] || 'rank-n'; }
+function fmtPrice(p) {
+  if (!p && p !== 0) return '-';
+  if (p >= 10000) return '$' + p.toLocaleString('en-US',{maximumFractionDigits:0});
+  if (p >= 1) return '$' + p.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  return '$' + p.toPrecision(4);
+}
+
+function newsBadge(news) {
+  if (!news) return '';
+  const s = news.sentiment;
+  const cls = s === 'pozitif' ? 'badge-green' : s === 'negatif' ? 'badge-red' : 'badge-muted';
+  const icon = s === 'pozitif' ? '📰+' : s === 'negatif' ? '📰−' : '📰';
+  return `<span class="badge ${cls}">${icon} Haber</span>`;
+}
+
+function w52Badge(pct) {
+  if (pct >= 0) return `<span class="badge badge-gold">🔥 Zirve kırdı</span>`;
+  if (pct >= -3) return `<span class="badge badge-orange">⚡ Zirveye %${Math.abs(pct)}</span>`;
+  return `<span class="badge badge-muted">Zirveye %${Math.abs(pct)}</span>`;
+}
+
+function sectorBadge(sector, mom) {
+  const arrow = mom > 2 ? '↑' : mom < -2 ? '↓' : '→';
+  return `<span class="badge badge-sector">${sector} ${arrow}</span>`;
+}
+
+// ── ACCURACY ──────────────────────────────────
+async function loadAccuracy() {
+  try {
+    const res = await fetch('/api/accuracy');
+    const data = await res.json();
+    if (data.accuracy !== undefined) {
+      document.getElementById('acc-bar').classList.remove('hidden');
+      document.getElementById('acc-value').textContent = data.accuracy + '%';
+      document.getElementById('acc-detail').textContent =
+        `Dün ${data.results.length} hisse takip edildi · ${data.results.filter(r=>r.change>0).length} tanesi yükseldi`;
+    }
+  } catch(e) {}
+}
+
+// ── BIST ──────────────────────────────────────
+async function analyzeBist() {
+  const btn = document.getElementById('btn-bist');
+  const loading = document.getElementById('loading-bist');
+  const results = document.getElementById('results-bist');
+  btn.disabled = true;
+  btn.innerHTML = '⏳ Analiz ediliyor...';
+  loading.style.display = 'flex';
+  results.classList.add('hidden');
+
+  const msgs = [
+    'BIST hisseleri paralel indiriliyor...',
+    '50 hisse için RSI · MACD · OBV hesaplanıyor...',
+    '52 hafta zirve ve destek/direnç seviyeleri bulunuyor...',
+    'Sektör korelasyonu hesaplanıyor...',
+    'Top 10 için haber sentiment analizi yapılıyor...',
+    'Claude AI tüm verileri yorumluyor...'
+  ];
+  let mi = 0;
+  const lt = document.getElementById('loading-bist-text');
+  const iv = setInterval(() => { lt.textContent = msgs[++mi % msgs.length]; }, 4000);
+
+  try {
+    const res = await fetch('/api/tavan');
+    const data = await res.json();
+    clearInterval(iv);
+
+    const list = document.getElementById('stock-list');
+    list.innerHTML = '';
+    data.top_candidates.forEach((s, i) => {
+      const col = scoreColor(s.score);
+      const news = s.news || {};
+      list.innerHTML += `
+        <div class="stock-card">
+          <div class="stock-card-top">
+            <div class="stock-rank ${rankClass(i)}">${i+1}</div>
+            <div class="stock-info">
+              <div class="stock-ticker">${s.ticker}</div>
+              <div class="badges">
+                ${sectorBadge(s.sector, s.sector_momentum)}
+                ${w52Badge(s.pct_from_high)}
+                <span class="badge ${s.obv_bullish?'badge-green':'badge-red'}">OBV ${s.obv_bullish?'↑':'↓'}</span>
+                <span class="badge ${s.macd_bullish?'badge-green':'badge-red'}">MACD ${s.macd_bullish?'↑':'↓'}</span>
+                ${newsBadge(s.news)}
+              </div>
+            </div>
+            <div class="stock-right">
+              <div class="stock-price">${s.price} TL</div>
+              <div class="stock-change ${chClass(s.daily_change)}">${sign(s.daily_change)}${s.daily_change}%</div>
+            </div>
+          </div>
+          <div class="metrics-row">
+            <div class="metric">RSI: <span>${s.rsi}</span></div>
+            <div class="metric">Hacim: <span>${s.volume_ratio}x</span></div>
+            <div class="metric">5g Mom: <span style="color:${s.momentum_5d>0?'#00e676':'#ff4757'}">${sign(s.momentum_5d)}${s.momentum_5d}%</span></div>
+            <div class="metric">Stoch: <span>${s.stoch_k}</span></div>
+            <div class="metric">Sektör Mom: <span style="color:${s.sector_momentum>0?'#00e676':'#ff4757'}">${sign(s.sector_momentum)}${s.sector_momentum}%</span></div>
+          </div>
+          <div class="sr-row">
+            <div class="sr-item"><span class="sr-label">Direnç:</span> <span class="sr-val-res">${s.resistance1} TL</span></div>
+            <div class="sr-item"><span class="sr-label">Destek:</span> <span class="sr-val-sup">${s.support1} TL</span></div>
+            <div class="sr-item"><span class="sr-label">52H Zirve:</span> <span>${s.w52_high} TL</span></div>
+          </div>
+          <div class="score-row">
+            <div class="score-bar"><div class="score-fill" style="width:${s.score}%;background:${col}"></div></div>
+            <div class="score-text">Tavan Skoru: <strong>${s.score}/100</strong></div>
+          </div>
+        </div>`;
+    });
+
+    document.getElementById('ai-bist-content').textContent = data.ai_analysis;
+    document.getElementById('bist-timestamp').textContent = 'Son güncelleme: ' + data.timestamp;
+    loading.style.display = 'none';
+    results.classList.remove('hidden');
+    await loadAccuracy();
+  } catch(err) {
+    clearInterval(iv);
+    loading.style.display = 'none';
+    alert('Hata: ' + err.message);
+  }
+  btn.disabled = false;
+  btn.innerHTML = '🔍 Yenile';
+}
+
+// ── CRYPTO ────────────────────────────────────
+async function analyzeCrypto() {
+  const btn = document.getElementById('btn-crypto');
+  const loading = document.getElementById('loading-crypto');
+  const results = document.getElementById('results-crypto');
+  btn.disabled = true;
+  btn.innerHTML = '⏳ Analiz ediliyor...';
+  loading.style.display = 'flex';
+  results.classList.add('hidden');
+
+  try {
+    const res = await fetch('/api/crypto');
+    const data = await res.json();
+
+    const topList = document.getElementById('crypto-top-list');
+    topList.innerHTML = '';
+    data.top_candidates.slice(0,8).forEach((c,i) => {
+      const col = scoreColor(c.score);
+      topList.innerHTML += `
+        <div class="stock-card">
+          <div class="stock-card-top">
+            <div class="stock-rank ${rankClass(i)}">${i+1}</div>
+            <div class="stock-info">
+              <div class="stock-ticker">${c.symbol} <span style="font-size:12px;color:var(--muted);font-weight:400">${c.name}</span></div>
+              <div class="metrics-row">
+                <div class="metric">1s: <span style="color:${c.change_1h>=0?'#00e676':'#ff4757'}">${sign(c.change_1h)}${c.change_1h}%</span></div>
+                <div class="metric">24s: <span style="color:${c.change_24h>=0?'#00e676':'#ff4757'}">${sign(c.change_24h)}${c.change_24h}%</span></div>
+                <div class="metric">7g: <span style="color:${c.change_7d>=0?'#00e676':'#ff4757'}">${sign(c.change_7d)}${c.change_7d}%</span></div>
+                <div class="metric">Hcm/Mcap: <span>${c.vol_to_mcap}%</span></div>
+              </div>
+              <div class="score-row">
+                <div class="score-bar"><div class="score-fill" style="width:${c.score}%;background:${col}"></div></div>
+                <div class="score-text">Skor: <strong>${c.score}/100</strong></div>
+              </div>
+            </div>
+            <div class="stock-right">
+              <div class="stock-price">${fmtPrice(c.price)}</div>
+              <div class="stock-change ${chClass(c.change_24h)}">${sign(c.change_24h)}${c.change_24h}%</div>
+            </div>
+          </div>
+        </div>`;
+    });
+
+    const fullList = document.getElementById('crypto-full-list');
+    fullList.innerHTML = '';
+    data.coins.forEach(c => {
+      const col = scoreColor(c.score);
+      fullList.innerHTML += `
+        <div class="crypto-card">
+          <div class="crypto-top">
+            ${c.image ? `<img class="crypto-img" src="${c.image}" alt="${c.symbol}" onerror="this.style.display='none'"/>` : ''}
+            <div><div class="crypto-name">${c.name}</div><div class="crypto-symbol">${c.symbol}</div></div>
+          </div>
+          <div class="crypto-price">${fmtPrice(c.price)}</div>
+          <div class="crypto-changes">
+            <div class="change-pill ${chClass(c.change_1h)}">${sign(c.change_1h)}${c.change_1h}% 1s</div>
+            <div class="change-pill ${chClass(c.change_24h)}">${sign(c.change_24h)}${c.change_24h}% 24s</div>
+            <div class="change-pill ${chClass(c.change_7d)}">${sign(c.change_7d)}${c.change_7d}% 7g</div>
+          </div>
+          <div class="score-row">
+            <div class="score-bar"><div class="score-fill" style="width:${c.score}%;background:${col}"></div></div>
+            <div class="score-text">${c.score}/100</div>
+          </div>
+        </div>`;
+    });
+
+    document.getElementById('ai-crypto-content').textContent = data.ai_analysis;
+    document.getElementById('crypto-timestamp').textContent = 'Son güncelleme: ' + data.timestamp;
+    loading.style.display = 'none';
+    results.classList.remove('hidden');
+  } catch(err) {
+    loading.style.display = 'none';
+    alert('Hata: ' + err.message);
+  }
+  btn.disabled = false;
+  btn.innerHTML = '🔍 Yenile';
+}
+
+// ── CHAT ──────────────────────────────────────
+function addMsg(text, type) {
+  const box = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = 'msg msg-' + type;
+  div.textContent = text;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+function addTyping() {
+  const box = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = 'msg msg-ai'; div.id = 'typing';
+  div.textContent = '⏳ Analiz ediliyor...';
+  box.appendChild(div); box.scrollTop = box.scrollHeight;
+}
+function removeTyping() { const t = document.getElementById('typing'); if(t) t.remove(); }
+
+async function sendChat() {
+  const input = document.getElementById('chat-input');
+  const btn = document.getElementById('btn-send');
+  const q = input.value.trim();
+  if (!q) return;
+  addMsg(q, 'user');
+  input.value = '';
+  btn.disabled = true;
+  addTyping();
+  try {
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({question: q})
+    });
+    const data = await res.json();
+    removeTyping();
+    addMsg(data.answer || ('Hata: ' + (data.error||'bilinmiyor')), 'ai');
+  } catch(err) {
+    removeTyping();
+    addMsg('Sunucu hatası: ' + err.message, 'ai');
+  }
+  btn.disabled = false;
+}
+function quickAsk(el) {
+  document.getElementById('chat-input').value = el.textContent;
+  sendChat();
+}
+</script>
+</body>
+</html>
